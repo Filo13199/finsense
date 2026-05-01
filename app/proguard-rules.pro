@@ -1,0 +1,2 @@
+-keep class com.finsense.data.entity.** { *; }
+-keep class com.finsense.data.db.** { *; }

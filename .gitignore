@@ -1,0 +1,7 @@
+app/build/
+.gradle/
+.claude/
+.idea/
+*.iml
+.kotlin
+*.prof
