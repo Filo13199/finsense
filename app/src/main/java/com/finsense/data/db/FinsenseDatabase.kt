@@ -36,6 +36,18 @@ class Migration1To2(private val context: Context) : Migration(1, 2) {
     }
 }
 
+object Migration4To5 : Migration(4, 5) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE transactions ADD COLUMN normalized_vendor_name TEXT DEFAULT NULL")
+    }
+}
+
+object Migration3To4 : Migration(3, 4) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE budgets ADD COLUMN excludedCategoryIds TEXT NOT NULL DEFAULT ''")
+    }
+}
+
 object Migration2To3 : Migration(2, 3) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL("ALTER TABLE transactions ADD COLUMN recurringId INTEGER DEFAULT NULL")
@@ -62,7 +74,7 @@ object Migration2To3 : Migration(2, 3) {
 
 @Database(
     entities = [Transaction::class, Category::class, Budget::class, Vendor::class, RecurringTransaction::class],
-    version = 3,
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

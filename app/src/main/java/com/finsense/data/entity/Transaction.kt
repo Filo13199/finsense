@@ -1,5 +1,6 @@
 package com.finsense.data.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -35,5 +36,6 @@ data class Transaction(
     val smsId: String? = null,
     val smsBody: String? = null,
     val isManual: Boolean = false,
-    val recurringId: Long? = null
+    val recurringId: Long? = null,
+    @ColumnInfo(name = "normalized_vendor_name") val normalizedVendorName: String? = null
 )

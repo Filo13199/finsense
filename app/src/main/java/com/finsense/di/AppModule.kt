@@ -11,6 +11,8 @@ import com.finsense.data.dao.VendorDao
 import com.finsense.data.db.FinsenseDatabase
 import com.finsense.data.db.Migration1To2
 import com.finsense.data.db.Migration2To3
+import com.finsense.data.db.Migration3To4
+import com.finsense.data.db.Migration4To5
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -26,7 +28,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): FinsenseDatabase {
         return Room.databaseBuilder(context, FinsenseDatabase::class.java, "finsense.db")
-            .addMigrations(Migration1To2(context), Migration2To3)
+            .addMigrations(Migration1To2(context), Migration2To3, Migration3To4, Migration4To5)
             .addCallback(object : androidx.room.RoomDatabase.Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     super.onCreate(db)

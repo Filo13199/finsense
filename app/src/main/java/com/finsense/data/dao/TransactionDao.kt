@@ -38,7 +38,9 @@ interface TransactionDao {
     @RoomTransaction
     @Query("""
         SELECT * FROM transactions
-        WHERE (vendor LIKE '%' || :query || '%' OR description LIKE '%' || :query || '%')
+        WHERE (vendor LIKE '%' || :query || '%'
+           OR description LIKE '%' || :query || '%'
+           OR normalized_vendor_name LIKE '%' || :query || '%')
         ORDER BY date DESC
     """)
     fun searchWithCategory(query: String): Flow<List<TransactionWithCategory>>
@@ -69,6 +71,17 @@ interface TransactionDao {
     @Query("""
         SELECT COALESCE(SUM(amount), 0.0)
         FROM transactions
+        WHERE type = 'DEBIT' AND date >= :startDate AND date <= :endDate
+        AND currency = :currency
+        AND (categoryId IS NULL OR categoryId NOT IN (:excludedIds))
+    """)
+    suspend fun totalDebitForPeriodExcluding(
+        startDate: Long, endDate: Long, currency: String, excludedIds: List<Long>
+    ): Double
+
+    @Query("""
+        SELECT COALESCE(SUM(amount), 0.0)
+        FROM transactions
         WHERE type = 'CREDIT' AND date >= :startDate AND date <= :endDate
         AND currency = :currency
     """)
@@ -77,6 +90,21 @@ interface TransactionDao {
     @Query("SELECT EXISTS(SELECT 1 FROM transactions WHERE smsId = :smsId)")
     suspend fun existsBySmsId(smsId: String): Boolean
 
-    @Query("UPDATE transactions SET categoryId = :categoryId WHERE vendor = :vendor AND categoryId IS NULL")
-    suspend fun updateCategoryForVendorUncategorized(vendor: String, categoryId: Long)
+    @Query("""
+        UPDATE transactions SET categoryId = :categoryId
+        WHERE categoryId IS NULL
+        AND (vendor = :vendor OR normalized_vendor_name = :normalizedName)
+    """)
+    suspend fun updateCategoryForVendorUncategorized(vendor: String, normalizedName: String, categoryId: Long)
+
+    @Query("""
+        UPDATE transactions SET normalized_vendor_name = :normalizedName
+        WHERE lower(vendor) LIKE '%' || lower(:keyword) || '%'
+          AND normalized_vendor_name IS NULL
+    """)
+    suspend fun applyNormalizedVendorForKeyword(keyword: String, normalizedName: String)
+
+    @RoomTransaction
+    @Query("SELECT * FROM transactions ORDER BY date DESC LIMIT :limit")
+    fun getLatestWithCategory(limit: Int): Flow<List<TransactionWithCategory>>
 }

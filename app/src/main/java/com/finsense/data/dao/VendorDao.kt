@@ -19,6 +19,9 @@ interface VendorDao {
     @Query("SELECT * FROM vendors ORDER BY name ASC")
     fun getAll(): Flow<List<Vendor>>
 
+    @Query("SELECT * FROM vendors")
+    suspend fun getAllOnce(): List<Vendor>
+
     @Query("""
         SELECT * FROM vendors
         WHERE lower(name) LIKE '%' || lower(:name) || '%'

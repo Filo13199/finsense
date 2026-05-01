@@ -33,6 +33,9 @@ class TransactionRepository @Inject constructor(
         return transactionDao.getRecentWithCategory(thirtyDaysAgo, limit)
     }
 
+    fun getLatestWithCategory(limit: Int): Flow<List<TransactionWithCategory>> =
+        transactionDao.getLatestWithCategory(limit)
+
     suspend fun existsBySmsId(smsId: String): Boolean =
         transactionDao.existsBySmsId(smsId)
 
@@ -49,14 +52,29 @@ class TransactionRepository @Inject constructor(
 
     suspend fun categorizeVendor(transaction: Transaction, categoryId: Long, cascade: Boolean) {
         transactionDao.update(transaction.copy(categoryId = categoryId))
-        val existing = vendorDao.findByName(transaction.vendor)
+        val vendorKey = transaction.normalizedVendorName ?: transaction.vendor
+        val existing = vendorDao.findByName(vendorKey)
         if (existing != null) {
             vendorDao.update(existing.copy(categoryId = categoryId))
         } else {
-            vendorDao.insert(Vendor(name = transaction.vendor, categoryId = categoryId))
+            vendorDao.insert(Vendor(name = vendorKey, categoryId = categoryId))
         }
         if (cascade) {
-            transactionDao.updateCategoryForVendorUncategorized(transaction.vendor, categoryId)
+            transactionDao.updateCategoryForVendorUncategorized(
+                transaction.vendor,
+                transaction.normalizedVendorName ?: transaction.vendor,
+                categoryId
+            )
+        }
+    }
+
+    suspend fun applyVendorNormalization(vendor: Vendor) {
+        val keywords = buildList {
+            add(vendor.name)
+            vendor.aliases.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { add(it) }
+        }
+        keywords.forEach { keyword ->
+            transactionDao.applyNormalizedVendorForKeyword(keyword, vendor.name)
         }
     }
 
@@ -72,13 +90,17 @@ class TransactionRepository @Inject constructor(
     ): Double = transactionDao.sumDebitByCategoryAndPeriod(categoryId, startDate, endDate, currency)
 
     private suspend fun autoCategorize(transaction: Transaction): Transaction {
-        if (transaction.categoryId != null) return transaction
-
         val vendor = transaction.vendor.trim()
 
-        vendorDao.findByName(vendor)?.categoryId?.let { catId ->
-            return transaction.copy(categoryId = catId)
+        val matchedVendor = findVendorByKeyword(vendor)
+        if (matchedVendor != null) {
+            return transaction.copy(
+                normalizedVendorName = matchedVendor.name,
+                categoryId = transaction.categoryId ?: matchedVendor.categoryId
+            )
         }
+
+        if (transaction.categoryId != null) return transaction
 
         val searchText = (vendor + " " + transaction.description).lowercase()
         categoryDao.getAllOnce().forEach { category ->
@@ -89,6 +111,17 @@ class TransactionRepository @Inject constructor(
         }
 
         return transaction
+    }
+
+    private suspend fun findVendorByKeyword(extractedVendor: String): Vendor? {
+        val lower = extractedVendor.lowercase()
+        return vendorDao.getAllOnce().firstOrNull { v ->
+            val keywords = buildList {
+                add(v.name)
+                v.aliases.split(",").map { it.trim() }.filter { it.isNotEmpty() }.forEach { add(it) }
+            }
+            keywords.any { kw -> lower.contains(kw.lowercase()) }
+        }
     }
 
     fun periodMonthRange(monthStartDay: Int): Pair<Long, Long> {
