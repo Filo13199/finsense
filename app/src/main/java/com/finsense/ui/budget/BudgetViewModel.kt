@@ -72,10 +72,16 @@ class BudgetViewModel @Inject constructor(
             .launchIn(viewModelScope)
     }
 
-    fun addBudget(name: String, categoryId: Long?, amount: Double, period: BudgetPeriod) {
+    fun addBudget(name: String, categoryId: Long?, amount: Double, period: BudgetPeriod, excludedCategoryIds: List<Long> = emptyList()) {
         viewModelScope.launch {
             budgetRepository.insert(
-                Budget(name = name, categoryId = categoryId, amount = amount, period = period)
+                Budget(
+                    name = name,
+                    categoryId = categoryId,
+                    amount = amount,
+                    period = period,
+                    excludedCategoryIds = excludedCategoryIds.joinToString(",")
+                )
             )
         }
     }

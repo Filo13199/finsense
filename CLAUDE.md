@@ -62,7 +62,7 @@ com.finsense/
 | smsBody | String? | Original SMS text |
 | isManual | Boolean | false = from SMS, true = user-entered |
 
-**DB version: 3.** `Migration1To2` adds the `currency` column (back-filled from SharedPreferences). `Migration2To3` adds the `recurringId` column and creates the `recurring_transactions` table. Manual transactions default to the preferred currency at the time of entry.
+**DB version: 4.** `Migration1To2` adds the `currency` column (back-filled from SharedPreferences). `Migration2To3` adds the `recurringId` column and creates the `recurring_transactions` table. `Migration3To4` adds the `excludedCategoryIds` column to `budgets`. Manual transactions default to the preferred currency at the time of entry.
 
 ### categories
 | Column | Type | Notes |
@@ -80,11 +80,14 @@ com.finsense/
 |---|---|---|
 | id | Long PK autoGenerate | |
 | name | String | Display name |
-| categoryId | Long? FK → categories.id | CASCADE on delete |
+| categoryId | Long? FK → categories.id | CASCADE on delete; null = all categories |
 | amount | Double | Budget limit |
 | period | TEXT (enum) | DAILY, WEEKLY, MONTHLY |
+| excludedCategoryIds | String | Comma-separated category IDs to exclude; only used when `categoryId` is null; added in DB v4 |
 
 Budget "spent" is **never stored** — always computed dynamically by summing DEBIT transactions in the category for the current period. This avoids stale data.
+
+When `categoryId` is null and `excludedCategoryIds` is non-empty, `BudgetRepository` calls `TransactionDao.totalDebitForPeriodExcluding()` which uses `AND (categoryId IS NULL OR categoryId NOT IN (:excludedIds))`. The repository branches on `excludedIds.isNotEmpty()` so the `NOT IN` query is never called with an empty list (which would cause a Room binding error).
 
 ### vendors
 | Column | Type | Notes |
@@ -146,6 +149,15 @@ Totals and budget calculations are filtered by `currency = :currency` in the DAO
 
 Transaction rows display amounts in the preferred currency's symbol for matching rows, and as `"<CODE> <amount>"` (e.g. `−USD 50.00`) for foreign rows.
 
+### SMS vendor extraction
+`SmsParser.vendorPatterns` is an ordered list of regexes tried in sequence; first match wins. Patterns currently (in priority order):
+
+1. `at\s+([0-9][A-Za-z0-9 &.\-'_]{1,49}?)\s+on\b` — digit-starting names between "at" and "on" (e.g. `at 30 NORTH Mall O on`)
+2. `(?:at|At)\s+([A-Z][A-Za-z0-9 &.\-'_]{2,40}?)(?:\s+on\b|\s+via\b|\s+\(|\.|;|\|)` — uppercase-starting names between "at" and a delimiter
+3. Additional patterns for other SMS formats
+
+Patterns 1 and 2 are non-overlapping by first character (`[0-9]` vs `[A-Z]`), so there is no ambiguity. Add new patterns before the catch-all entries and keep them most-specific-first.
+
 ### SMS filtering
 `SmsParser.isFinancialSms()` checks two conditions before parsing:
 1. Sender ID matches alphanumeric bank-code pattern (`VM-HDFCBK`, `SBIINB`, etc.) — filters out personal contacts
@@ -180,6 +192,7 @@ Icons must be in `res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/` as `ic_launcher.
 | `Entities must have a usable public constructor` | Stray `annotation` keyword: `annotation data class Transaction` | Removed `annotation` keyword |
 | `Illegal annotation class 'Transaction'` | `@Transaction` resolved to entity class instead of Room annotation due to name clash | Aliased Room annotation: `import androidx.room.Transaction as RoomTransaction` |
 | Monthly totals and budget "spent" never updated after initial load | `loadMonthlyTotals()` ran once at ViewModel init; `loadBudgets()` only re-ran on budget table changes, not transaction changes | Replaced with `observeRecentTransactions().onEach { refreshTotalsAndBudgets() }` — Room re-emits that Flow on any `transactions` table change |
+| FAB not visible in Categories screen | `CategoriesScreen` used a nested `Scaffold` with `floatingActionButton`; the outer bottom-nav `Scaffold` caused the inner FAB to be rendered outside the visible area | Replaced nested `Scaffold` with `Box` + `FloatingActionButton` aligned to `BottomEnd` using `contentPadding.calculateBottomPadding()` — same pattern as `BudgetScreen` |
 
 ## Permissions
 - `READ_SMS` — read historical SMS from content provider (dangerous, runtime prompt)

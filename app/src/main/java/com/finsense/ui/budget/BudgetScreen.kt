@@ -1,8 +1,11 @@
 package com.finsense.ui.budget
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -11,8 +14,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -20,6 +28,7 @@ import com.finsense.data.entity.BudgetPeriod
 import com.finsense.data.entity.Category
 import com.finsense.data.model.BudgetWithSpent
 import com.finsense.data.preferences.AppCurrency
+import com.finsense.ui.theme.CreditGreen
 import com.finsense.ui.theme.DebitRed
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,8 +88,8 @@ fun BudgetScreen(
         AddBudgetSheet(
             categories = state.categories,
             onDismiss = { showSheet = false },
-            onAdd = { name, catId, amount, period ->
-                vm.addBudget(name, catId, amount, period)
+            onAdd = { name, catId, amount, period, excludedIds ->
+                vm.addBudget(name, catId, amount, period, excludedIds)
                 showSheet = false
             }
         )
@@ -90,59 +99,135 @@ fun BudgetScreen(
 @Composable
 private fun BudgetCard(bws: BudgetWithSpent, currency: AppCurrency, onDelete: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(bws.category?.icon ?: "📦", style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.width(8.dp))
-                    Column {
-                        Text(bws.budget.name, style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            BudgetRing(bws = bws, ringSize = 72.dp)
+
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(bws.budget.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    bws.budget.period.name.lowercase().replaceFirstChar { it.uppercase() },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (bws.excludedCategories.isNotEmpty()) {
+                    Text(
+                        "Excludes: ${bws.excludedCategories.joinToString { "${it.icon} ${it.name}" }}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "${currency.formatAmount(bws.spent)} / ${currency.formatAmount(bws.budget.amount)}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                if (bws.budget.period != BudgetPeriod.DAILY) {
+                    if (bws.isOverBudget) {
                         Text(
-                            "${bws.budget.period.name.lowercase().replaceFirstChar { it.uppercase() }}",
+                            "${currency.formatAmount(bws.dailyOverspend)}/day over budget",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DebitRed
+                        )
+                    } else {
+                        Text(
+                            "${currency.formatAmount(bws.dailyAllowance)}/day remaining",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CreditGreen
+                        )
+                    }
+                } else {
+                    if (bws.isOverBudget) {
+                        Text(
+                            "Over by ${currency.formatAmount(bws.spent - bws.budget.amount)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DebitRed
+                        )
+                    } else {
+                        Text(
+                            "${currency.formatAmount(bws.remaining)} remaining today",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete",
-                        tint = MaterialTheme.colorScheme.error)
+            }
+
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun BudgetRing(bws: BudgetWithSpent, ringSize: Dp) {
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+
+    Box(modifier = Modifier.size(ringSize), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokePx = size.width * 0.14f
+            val inset = strokePx / 2f
+            val diameter = size.width - strokePx
+            val topLeft = Offset(inset, inset)
+            val arcSize = Size(diameter, diameter)
+
+            // Gray track
+            drawArc(
+                color = trackColor,
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                topLeft = topLeft,
+                size = arcSize,
+                style = Stroke(width = strokePx)
+            )
+
+            if (bws.isOverBudget) {
+                drawArc(
+                    color = DebitRed,
+                    startAngle = -90f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokePx)
+                )
+            } else {
+                val spentSweep = 360f * bws.percentage
+                val remainingSweep = 360f - spentSweep
+
+                if (spentSweep > 0f) {
+                    drawArc(
+                        color = DebitRed,
+                        startAngle = -90f,
+                        sweepAngle = spentSweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(width = strokePx, cap = StrokeCap.Butt)
+                    )
+                }
+                if (remainingSweep > 0f) {
+                    drawArc(
+                        color = CreditGreen,
+                        startAngle = -90f + spentSweep,
+                        sweepAngle = remainingSweep,
+                        useCenter = false,
+                        topLeft = topLeft,
+                        size = arcSize,
+                        style = Stroke(width = strokePx, cap = StrokeCap.Butt)
+                    )
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Spent: ${currency.formatAmount(bws.spent)}", style = MaterialTheme.typography.bodyMedium,
-                    color = if (bws.isOverBudget) DebitRed else MaterialTheme.colorScheme.onSurface)
-                Text("Budget: ${currency.formatAmount(bws.budget.amount)}",
-                    style = MaterialTheme.typography.bodyMedium)
-            }
-            Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(
-                progress = { bws.percentage },
-                modifier = Modifier.fillMaxWidth(),
-                color = when {
-                    bws.percentage >= 1f -> DebitRed
-                    bws.percentage >= 0.8f -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.primary
-                },
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                if (bws.isOverBudget) "Over budget by ${currency.formatAmount(bws.spent - bws.budget.amount)}"
-                else "${currency.formatAmount(bws.remaining)} remaining",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (bws.isOverBudget) DebitRed else MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
+
+        Text(bws.category?.icon ?: "📦", style = MaterialTheme.typography.titleMedium)
     }
 }
 
@@ -151,18 +236,20 @@ private fun BudgetCard(bws: BudgetWithSpent, currency: AppCurrency, onDelete: ()
 private fun AddBudgetSheet(
     categories: List<Category>,
     onDismiss: () -> Unit,
-    onAdd: (String, Long?, Double, BudgetPeriod) -> Unit
+    onAdd: (String, Long?, Double, BudgetPeriod, List<Long>) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
     val period = BudgetPeriod.MONTHLY
     var selectedCategory by remember { mutableStateOf<Category?>(null) }
     var categoryExpanded by remember { mutableStateOf(false) }
+    var excludedIds by remember { mutableStateOf(emptySet<Long>()) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -207,13 +294,42 @@ private fun AddBudgetSheet(
                 ) {
                     DropdownMenuItem(
                         text = { Text("All categories") },
-                        onClick = { selectedCategory = null; categoryExpanded = false }
+                        onClick = {
+                            selectedCategory = null
+                            categoryExpanded = false
+                        }
                     )
                     categories.forEach { cat ->
                         DropdownMenuItem(
                             text = { Text("${cat.icon} ${cat.name}") },
-                            onClick = { selectedCategory = cat; categoryExpanded = false }
+                            onClick = {
+                                selectedCategory = cat
+                                excludedIds = emptySet()
+                                categoryExpanded = false
+                            }
                         )
+                    }
+                }
+            }
+
+            if (selectedCategory == null && categories.isNotEmpty()) {
+                Text(
+                    "Exclude from budget",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                categories.forEach { cat ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Checkbox(
+                            checked = cat.id in excludedIds,
+                            onCheckedChange = { checked ->
+                                excludedIds = if (checked) excludedIds + cat.id else excludedIds - cat.id
+                            }
+                        )
+                        Text("${cat.icon} ${cat.name}", style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -221,7 +337,13 @@ private fun AddBudgetSheet(
             Button(
                 onClick = {
                     val amt = amount.toDoubleOrNull() ?: return@Button
-                    onAdd(name.ifBlank { selectedCategory?.name ?: "Budget" }, selectedCategory?.id, amt, period)
+                    onAdd(
+                        name.ifBlank { selectedCategory?.name ?: "Budget" },
+                        selectedCategory?.id,
+                        amt,
+                        period,
+                        excludedIds.toList()
+                    )
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = amount.toDoubleOrNull() != null

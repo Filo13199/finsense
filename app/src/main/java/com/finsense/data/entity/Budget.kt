@@ -24,5 +24,6 @@ data class Budget(
     val name: String,
     val categoryId: Long?,
     val amount: Double,
-    val period: BudgetPeriod = BudgetPeriod.MONTHLY
+    val period: BudgetPeriod = BudgetPeriod.MONTHLY,
+    val excludedCategoryIds: String = ""
 )

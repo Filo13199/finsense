@@ -27,11 +27,26 @@ class BudgetRepository @Inject constructor(
         val budgets = budgetDao.getAllOnce()
         return budgets.map { budget ->
             val (start, end) = periodRange(budget.period, monthStartDay)
-            val spent = budget.categoryId?.let {
-                transactionDao.sumDebitByCategoryAndPeriod(it, start, end, currency)
-            } ?: 0.0
+            val excludedIds = budget.excludedCategoryIds
+                .split(",")
+                .mapNotNull { it.trim().toLongOrNull() }
+            val spent = when {
+                budget.categoryId != null ->
+                    transactionDao.sumDebitByCategoryAndPeriod(budget.categoryId, start, end, currency)
+                excludedIds.isNotEmpty() ->
+                    transactionDao.totalDebitForPeriodExcluding(start, end, currency, excludedIds)
+                else ->
+                    transactionDao.totalDebitForPeriod(start, end, currency)
+            }
             val category = budget.categoryId?.let { categoryDao.getById(it) }
-            BudgetWithSpent(budget = budget, category = category, spent = spent)
+            val excludedCategories = excludedIds.mapNotNull { categoryDao.getById(it) }
+            BudgetWithSpent(
+                budget = budget,
+                category = category,
+                excludedCategories = excludedCategories,
+                spent = spent,
+                periodEndMs = end
+            )
         }
     }
 

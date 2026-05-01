@@ -9,6 +9,7 @@ import com.finsense.data.preferences.UserPreferences
 import com.finsense.data.repository.BudgetRepository
 import com.finsense.data.repository.TransactionRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -19,6 +20,7 @@ data class DashboardUiState(
     val recentTransactions: List<TransactionWithCategory> = emptyList(),
     val budgets: List<BudgetWithSpent> = emptyList(),
     val isLoading: Boolean = true,
+    val hasMoreTransactions: Boolean = false,
     val currency: AppCurrency = AppCurrency.EGP
 )
 
@@ -31,6 +33,8 @@ class DashboardViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
+
+    private val _limit = MutableStateFlow(PAGE_SIZE)
 
     init {
         observeRecentTransactions()
@@ -46,10 +50,21 @@ class DashboardViewModel @Inject constructor(
             .launchIn(viewModelScope)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private fun observeRecentTransactions() {
-        transactionRepository.getRecentWithCategory()
-            .onEach { list ->
-                _uiState.update { it.copy(recentTransactions = list, isLoading = false) }
+        _limit
+            .flatMapLatest { limit ->
+                transactionRepository.getLatestWithCategory(limit)
+                    .map { list -> list to limit }
+            }
+            .onEach { (list, limit) ->
+                _uiState.update {
+                    it.copy(
+                        recentTransactions = list,
+                        isLoading = false,
+                        hasMoreTransactions = list.size >= limit
+                    )
+                }
                 refreshTotalsAndBudgets(userPreferences.currency.name)
             }
             .launchIn(viewModelScope)
@@ -68,7 +83,15 @@ class DashboardViewModel @Inject constructor(
         _uiState.update { it.copy(monthlyExpense = expense, monthlyIncome = income, budgets = withSpent) }
     }
 
+    fun loadMoreTransactions() {
+        _limit.value += PAGE_SIZE
+    }
+
     fun refresh() {
         viewModelScope.launch { refreshTotalsAndBudgets(userPreferences.currency.name) }
+    }
+
+    companion object {
+        private const val PAGE_SIZE = 15
     }
 }

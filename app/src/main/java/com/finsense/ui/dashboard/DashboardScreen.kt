@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -13,10 +14,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.finsense.data.entity.BudgetPeriod
 import com.finsense.data.entity.TransactionType
 import com.finsense.data.entity.TransactionWithCategory
 import com.finsense.data.model.BudgetWithSpent
 import com.finsense.data.preferences.AppCurrency
+import com.finsense.ui.budget.BudgetRing
 import com.finsense.ui.theme.CreditGreen
 import com.finsense.ui.theme.DebitRed
 import java.text.SimpleDateFormat
@@ -28,8 +31,21 @@ fun DashboardScreen(
     vm: DashboardViewModel = hiltViewModel()
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+
+    val reachedEnd by remember {
+        derivedStateOf {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = listState.layoutInfo.totalItemsCount
+            total > 0 && lastVisible >= total - 2
+        }
+    }
+    LaunchedEffect(reachedEnd) {
+        if (reachedEnd && state.hasMoreTransactions) vm.loadMoreTransactions()
+    }
 
     LazyColumn(
+        state = listState,
         contentPadding = contentPadding,
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier
@@ -65,6 +81,18 @@ fun DashboardScreen(
             }
         }
         items(state.recentTransactions) { txc -> TransactionRow(txc, state.currency) }
+        if (state.hasMoreTransactions) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                }
+            }
+        }
         item { Spacer(Modifier.height(8.dp)) }
     }
 }
@@ -105,37 +133,35 @@ private fun AmountColumn(label: String, amount: Double, color: Color, currency: 
 @Composable
 private fun BudgetProgressCard(bws: BudgetWithSpent, currency: AppCurrency) {
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(bws.category?.icon ?: "📦", style = MaterialTheme.typography.titleLarge)
-                    Spacer(Modifier.width(8.dp))
-                    Text(bws.budget.name, style = MaterialTheme.typography.titleMedium)
-                }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            BudgetRing(bws = bws, ringSize = 56.dp)
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(bws.budget.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(
                     "${currency.formatAmount(bws.spent)} / ${currency.formatAmount(bws.budget.amount)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (bws.isOverBudget) DebitRed else MaterialTheme.colorScheme.onSurface
+                    style = MaterialTheme.typography.bodySmall
                 )
-            }
-            Spacer(Modifier.height(8.dp))
-            LinearProgressIndicator(
-                progress = { bws.percentage },
-                modifier = Modifier.fillMaxWidth(),
-                color = if (bws.isOverBudget) DebitRed else MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-            if (bws.isOverBudget) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Over by ${currency.formatAmount(bws.spent - bws.budget.amount)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = DebitRed
-                )
+                if (bws.budget.period != BudgetPeriod.DAILY) {
+                    if (bws.isOverBudget) {
+                        Text(
+                            "${currency.formatAmount(bws.dailyOverspend)}/day over budget",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DebitRed
+                        )
+                    } else {
+                        Text(
+                            "${currency.formatAmount(bws.dailyAllowance)}/day remaining",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CreditGreen
+                        )
+                    }
+                }
             }
         }
     }
@@ -158,7 +184,7 @@ fun TransactionRow(txc: TransactionWithCategory, currency: AppCurrency, onClick:
             )
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(tx.vendor, style = MaterialTheme.typography.titleMedium,
+                Text(tx.normalizedVendorName ?: tx.vendor, style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold)
                 Text(
                     txc.category?.name ?: "Uncategorized",
