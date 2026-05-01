@@ -34,6 +34,7 @@ class SmsParser @Inject constructor(private val userPreferences: UserPreferences
 
     // Vendor extraction — ordered from most specific to least
     private val vendorPatterns = listOf(
+        Regex("""at\s+([0-9][A-Za-z0-9 &.\-'_]{1,49}?)\s+on\b""", RegexOption.IGNORE_CASE),
         Regex("""(?:at|At)\s+([A-Z][A-Za-z0-9 &.\-'_]{2,40}?)(?:\s+on\b|\s+via\b|\s+\(|\.|;|\|)"""),
         Regex("""(?:paid to|Paid to|to UPI|to)\s+([A-Za-z0-9 &.\-'_@]{3,40}?)(?:\s+(?:via|on|for)|\s*[.;|]|$)""", RegexOption.IGNORE_CASE),
         Regex("""Info:\s*([A-Za-z0-9 &.\-'_]{2,40}?)(?:\s*[;|]|$)""", RegexOption.IGNORE_CASE),
