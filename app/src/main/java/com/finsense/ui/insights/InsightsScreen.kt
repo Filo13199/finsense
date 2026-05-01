@@ -2,6 +2,8 @@ package com.finsense.ui.insights
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,22 +23,37 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finsense.data.preferences.AppCurrency
+import kotlin.math.PI
+import kotlin.math.atan2
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InsightsScreen(
     contentPadding: PaddingValues,
+    onNavigateToSlice: (startMs: Long, endMs: Long, filterType: String, filterValue: String, label: String, currency: AppCurrency) -> Unit = { _, _, _, _, _, _ -> },
     vm: InsightsViewModel = hiltViewModel()
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     var showFilterSheet by remember { mutableStateOf(false) }
+
+    val onSliceClick: (SpendingSlice) -> Unit = { slice ->
+        val filterType = if (slice.vendorKey != null) "vendor" else "category"
+        val filterValue = when {
+            slice.vendorKey != null -> slice.vendorKey
+            slice.categoryId != null -> slice.categoryId.toString()
+            else -> "__uncategorized__"
+        }
+        onNavigateToSlice(state.periodStartMs, state.periodEndMs, filterType, filterValue, slice.label, state.currency)
+    }
 
     LazyColumn(
         contentPadding = PaddingValues(
@@ -105,6 +122,7 @@ fun InsightsScreen(
             ) {
                 DonutChart(
                     slices = state.slices,
+                    onSliceClick = onSliceClick,
                     modifier = Modifier.size(200.dp)
                 )
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -136,7 +154,7 @@ fun InsightsScreen(
 
         // Breakdown list
         items(state.slices) { slice ->
-            SliceRow(slice = slice, currency = state.currency)
+            SliceRow(slice = slice, currency = state.currency, onClick = { onSliceClick(slice) })
         }
     }
 
@@ -151,9 +169,41 @@ fun InsightsScreen(
 }
 
 @Composable
-private fun DonutChart(slices: List<SpendingSlice>, modifier: Modifier = Modifier) {
+private fun DonutChart(
+    slices: List<SpendingSlice>,
+    onSliceClick: (SpendingSlice) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val trackColor = MaterialTheme.colorScheme.surfaceVariant
-    Canvas(modifier = modifier) {
+    Canvas(
+        modifier = modifier.pointerInput(slices) {
+            detectTapGestures { offset ->
+                if (slices.isEmpty()) return@detectTapGestures
+                val cx = size.width / 2f
+                val cy = size.height / 2f
+                val strokePx = size.width * 0.14f
+                val outerRadius = size.width / 2f
+                val innerRadius = outerRadius - strokePx
+                val dx = offset.x - cx
+                val dy = offset.y - cy
+                val dist = sqrt(dx * dx + dy * dy)
+                if (dist < innerRadius || dist > outerRadius) return@detectTapGestures
+                val rawAngle = (atan2(dy.toDouble(), dx.toDouble()) * (180.0 / PI)).toFloat()
+                val normalizedAngle = (rawAngle + 90f + 360f) % 360f
+                val gapDeg = if (slices.size == 1) 0f else 2f
+                val available = 360f - gapDeg * slices.size
+                var cumAngle = 0f
+                for (slice in slices) {
+                    val sweep = (available * slice.percentage).coerceAtLeast(1f)
+                    if (normalizedAngle >= cumAngle && normalizedAngle < cumAngle + sweep) {
+                        onSliceClick(slice)
+                        return@detectTapGestures
+                    }
+                    cumAngle += sweep + gapDeg
+                }
+            }
+        }
+    ) {
         val strokePx = size.width * 0.14f
         val inset = strokePx / 2f
         val arcSize = Size(size.width - strokePx, size.height - strokePx)
@@ -188,8 +238,8 @@ private fun DonutChart(slices: List<SpendingSlice>, modifier: Modifier = Modifie
 }
 
 @Composable
-private fun SliceRow(slice: SpendingSlice, currency: AppCurrency) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+private fun SliceRow(slice: SpendingSlice, currency: AppCurrency, onClick: () -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

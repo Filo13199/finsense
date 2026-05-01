@@ -193,7 +193,14 @@ ViewModels observe both flows and recalculate totals/budgets immediately when ei
 The `offset` parameter in the Insights variant shifts the window by N months (e.g. `offset = -1` gives "last month"). Setting `monthStartDay` to 1 produces the standard calendar month. DAILY and WEEKLY budget periods are unaffected.
 
 ### Multi-currency / international transactions
-`SmsParser.extractAmountAndCurrency()` tries the preferred-currency patterns first, then falls back to a generic ISO-code pattern that catches `USD 50.00`, `EUR 1,200.00`, `GBP 45`, etc. The parsed currency code is stored in `Transaction.currency`.
+`SmsParser.extractAmountAndCurrency()` detects currency from the SMS body using this priority order:
+
+1. **ISO code before amount** — `EGP 1,500.00`, `USD 50.00`, `EUR 1,200.00`
+2. **ISO code after amount** — `50.00 USD`, `1500 EGP`
+3. **Preferred-currency symbol patterns** — `₹500`, `Rs. 500` (non-standard symbols defined in `AppCurrency.amountPatterns`)
+4. **Bare amount fallback** — no currency marker in SMS; amount extracted from financial-keyword context (`debited 1,500`, `payment of 500`) and tagged with the user's preferred currency from settings
+
+Currency is assumed to be present in the SMS in English. The fallback to preferred currency only fires when no recognisable marker is found. The parsed currency code is stored in `Transaction.currency`.
 
 Totals and budget calculations are filtered by `currency = :currency` in the DAO queries, so foreign-currency transactions are stored and visible in the transaction list but are excluded from the monthly totals, budget progress, and insights. No exchange-rate conversion is performed (the app has no network access).
 

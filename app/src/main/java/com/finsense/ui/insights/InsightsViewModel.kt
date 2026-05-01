@@ -29,7 +29,9 @@ data class SpendingSlice(
     val icon: String,
     val color: Long,
     val amount: Double,
-    val percentage: Float
+    val percentage: Float,
+    val categoryId: Long? = null,
+    val vendorKey: String? = null
 )
 
 data class InsightsUiState(
@@ -40,7 +42,9 @@ data class InsightsUiState(
     val slices: List<SpendingSlice> = emptyList(),
     val totalSpent: Double = 0.0,
     val currency: AppCurrency = AppCurrency.EGP,
-    val isLoading: Boolean = true
+    val isLoading: Boolean = true,
+    val periodStartMs: Long = 0L,
+    val periodEndMs: Long = 0L
 )
 
 @HiltViewModel
@@ -102,7 +106,7 @@ class InsightsViewModel @Inject constructor(
                 InsightsViewMode.CATEGORIES -> buildCategorySlices(transactions, cachedCategories, total)
                 InsightsViewMode.VENDORS -> buildVendorSlices(transactions, total)
             }
-            _uiState.update { it.copy(slices = slices, totalSpent = total, isLoading = false) }
+            _uiState.update { it.copy(slices = slices, totalSpent = total, isLoading = false, periodStartMs = start, periodEndMs = end) }
         }
     }
 
@@ -122,7 +126,8 @@ class InsightsViewModel @Inject constructor(
                     icon = cat?.icon ?: "📦",
                     color = cat?.color ?: 0xFF90A4AEL,
                     amount = amount,
-                    percentage = (amount / total).toFloat()
+                    percentage = (amount / total).toFloat(),
+                    categoryId = categoryId
                 )
             }
             .sortedByDescending { it.amount }
@@ -141,7 +146,8 @@ class InsightsViewModel @Inject constructor(
                     icon = "",
                     color = 0L,
                     amount = txcs.sumOf { it.transaction.amount },
-                    percentage = (txcs.sumOf { it.transaction.amount } / total).toFloat()
+                    percentage = (txcs.sumOf { it.transaction.amount } / total).toFloat(),
+                    vendorKey = vendor
                 )
             }
             .sortedByDescending { it.amount }

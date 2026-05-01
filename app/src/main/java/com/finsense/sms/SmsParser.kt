@@ -47,6 +47,12 @@ class SmsParser @Inject constructor(private val userPreferences: UserPreferences
     private val intlCurrencyBeforeAmount = Regex("""\b([A-Z]{3})\s+([0-9,]+(?:\.[0-9]{1,2})?)""")
     private val intlAmountBeforeCurrency = Regex("""([0-9,]+(?:\.[0-9]{1,2})?)\s*\b([A-Z]{3})\b""")
 
+    // Last-resort: amount without any currency marker — used with preferred currency as default.
+    private val amountOnlyPatterns = listOf(
+        Regex("""(?:debited?|credited?|spent|paid|payment|withdrawn|charged|amount)\s+(?:of\s+)?([0-9,]+(?:\.[0-9]{1,2})?)""", RegexOption.IGNORE_CASE),
+        Regex("""([0-9,]+(?:\.[0-9]{1,2})?)\s+(?:has been|was)\s+(?:debited|credited|charged)""", RegexOption.IGNORE_CASE)
+    )
+
     // Matches "DD/MM/YY at hh:mm", e.g. "14/04/26 at 16:08"
     private val datePatterns = listOf(
         Regex("""(\d{2}/\d{2}/\d{2})\s+at\s+(\d{2}:\d{2})""", RegexOption.IGNORE_CASE)
@@ -79,20 +85,27 @@ class SmsParser @Inject constructor(private val userPreferences: UserPreferences
 
     private fun extractAmountAndCurrency(body: String): Pair<Double, String>? {
         val preferred = userPreferences.currency
+        // 1. ISO code before amount, e.g. "EGP 1,500.00" or "USD 50.00"
+        intlCurrencyBeforeAmount.find(body)?.let { m ->
+            val amount = m.groupValues[2].replace(",", "").toDoubleOrNull()
+            if (amount != null) return amount to m.groupValues[1]
+        }
+        // 2. Amount before ISO code, e.g. "50.00 USD"
+        intlAmountBeforeCurrency.find(body)?.let { m ->
+            val amount = m.groupValues[1].replace(",", "").toDoubleOrNull()
+            if (amount != null) return amount to m.groupValues[2]
+        }
+        // 3. Preferred-currency symbol patterns, e.g. "₹500", "Rs. 500"
         for (pattern in preferred.amountPatterns) {
             val match = pattern.find(body) ?: continue
             val amount = match.groupValues[1].replace(",", "").toDoubleOrNull() ?: continue
             return amount to preferred.name
         }
-        // Fallback: generic ISO code before amount, e.g. "USD 50.00"
-        intlCurrencyBeforeAmount.find(body)?.let { m ->
-            val amount = m.groupValues[2].replace(",", "").toDoubleOrNull()
-            if (amount != null) return amount to m.groupValues[1]
-        }
-        // Fallback: amount before ISO code, e.g. "50.00 USD"
-        intlAmountBeforeCurrency.find(body)?.let { m ->
-            val amount = m.groupValues[1].replace(",", "").toDoubleOrNull()
-            if (amount != null) return amount to m.groupValues[2]
+        // 4. Last resort: no currency marker — extract bare amount, use preferred currency
+        for (pattern in amountOnlyPatterns) {
+            val match = pattern.find(body) ?: continue
+            val amount = match.groupValues[1].replace(",", "").toDoubleOrNull() ?: continue
+            return amount to preferred.name
         }
         return null
     }
