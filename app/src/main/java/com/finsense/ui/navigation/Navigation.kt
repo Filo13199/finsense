@@ -11,24 +11,26 @@ import androidx.navigation.compose.*
 import com.finsense.ui.budget.BudgetScreen
 import com.finsense.ui.categories.CategoriesScreen
 import com.finsense.ui.dashboard.DashboardScreen
+import com.finsense.ui.insights.InsightsScreen
 import com.finsense.ui.permission.PermissionScreen
 import com.finsense.ui.settings.SettingsScreen
 import com.finsense.ui.transactions.TransactionsScreen
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
-    object Dashboard    : Screen("dashboard", "Dashboard", Icons.Default.Home)
+    object Dashboard    : Screen("dashboard",    "Dashboard",    Icons.Default.Home)
     object Transactions : Screen("transactions", "Transactions", Icons.AutoMirrored.Filled.List)
-    object Budgets      : Screen("budgets", "Budgets", Icons.Default.AccountBalance)
-    object Categories   : Screen("categories", "Categories", Icons.Default.Category)
-    object Settings     : Screen("settings", "Settings", Icons.Default.Settings)
-    object Permission   : Screen("permission", "Permission", Icons.Default.Lock)
+    object Budgets      : Screen("budgets",      "Budgets",      Icons.Default.AccountBalance)
+    object Insights     : Screen("insights",     "Insights",     Icons.Default.BarChart)
+    object Settings     : Screen("settings",     "Settings",     Icons.Default.Settings)
+    object Categories   : Screen("categories",   "Categories",   Icons.Default.Category)
+    object Permission   : Screen("permission",   "Permission",   Icons.Default.Lock)
 }
 
 val bottomNavScreens = listOf(
     Screen.Dashboard,
     Screen.Transactions,
     Screen.Budgets,
-    Screen.Categories,
+    Screen.Insights,
     Screen.Settings
 )
 
@@ -85,11 +87,17 @@ fun FinsenseNavGraph(onRequestSmsPermission: () -> Unit) {
             composable(Screen.Budgets.route) {
                 BudgetScreen(contentPadding = padding)
             }
-            composable(Screen.Categories.route) {
-                CategoriesScreen(contentPadding = padding)
+            composable(Screen.Insights.route) {
+                InsightsScreen(contentPadding = padding)
             }
             composable(Screen.Settings.route) {
-                SettingsScreen(contentPadding = padding)
+                SettingsScreen(
+                    contentPadding = padding,
+                    onNavigateToCategories = { navController.navigate(Screen.Categories.route) }
+                )
+            }
+            composable(Screen.Categories.route) {
+                CategoriesScreen(contentPadding = padding)
             }
         }
     }

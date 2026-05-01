@@ -1,8 +1,12 @@
 package com.finsense.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Category
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.*
@@ -16,6 +20,7 @@ import com.finsense.data.preferences.AppCurrency
 @Composable
 fun SettingsScreen(
     contentPadding: PaddingValues,
+    onNavigateToCategories: () -> Unit = {},
     vm: SettingsViewModel = hiltViewModel()
 ) {
     val selectedCurrency by vm.currency.collectAsStateWithLifecycle()
@@ -123,6 +128,25 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        item { Spacer(Modifier.height(8.dp)) }
+        item {
+            Text(
+                "Manage",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                ListItem(
+                    headlineContent = { Text("Categories & Vendors") },
+                    supportingContent = { Text("Manage spending categories and vendor keyword rules") },
+                    leadingContent = { Icon(Icons.Default.Category, contentDescription = null) },
+                    trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null) },
+                    modifier = Modifier.clickable { onNavigateToCategories() }
+                )
+            }
         }
         item { Spacer(Modifier.height(8.dp)) }
     }

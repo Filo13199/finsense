@@ -1,7 +1,7 @@
 # Finsense — Project Reference
 
 ## What this app does
-Android-only personal finance tracker. Reads bank SMS automatically, extracts transactions, categorizes them, and tracks budgets. All data stays on device (SQLite). No network calls, no cloud sync.
+Android-only personal finance tracker. Reads bank SMS automatically, extracts transactions, categorizes them, tracks budgets, and shows spending insights. All data stays on device (SQLite). No network calls, no cloud sync.
 
 ## Tech stack
 | Layer | Choice | Why |
@@ -38,7 +38,9 @@ com.finsense/
 │   ├── dashboard/      DashboardScreen + DashboardViewModel
 │   ├── transactions/   TransactionsScreen + TransactionsViewModel
 │   ├── budget/         BudgetScreen + BudgetViewModel
-│   ├── categories/     CategoriesScreen + CategoriesViewModel
+│   ├── insights/       InsightsScreen + InsightsViewModel
+│   ├── categories/     CategoriesScreen + CategoriesViewModel (tabs: Categories | Vendors)
+│   ├── vendors/        VendorsScreen + VendorsViewModel
 │   ├── settings/       SettingsScreen + SettingsViewModel (currency picker, month start day)
 │   └── permission/     PermissionScreen (onboarding, SMS permission request)
 ├── FinsenseApplication  @HiltAndroidApp + WorkManager Configuration.Provider
@@ -53,7 +55,7 @@ com.finsense/
 | id | Long PK autoGenerate | |
 | amount | Double | Always positive |
 | type | TEXT (enum) | DEBIT or CREDIT |
-| vendor | String | Extracted from SMS or entered manually |
+| vendor | String | Raw vendor string extracted from SMS or entered manually; never overwritten |
 | description | String | Full SMS body (truncated) or manual note |
 | categoryId | Long? FK → categories.id | SET_NULL on delete |
 | date | Long | Unix timestamp ms; parsed from SMS body when available, falls back to SMS metadata or system time |
@@ -61,8 +63,16 @@ com.finsense/
 | smsId | String? UNIQUE | SMS content provider _id; null for manual entries |
 | smsBody | String? | Original SMS text |
 | isManual | Boolean | false = from SMS, true = user-entered |
+| recurringId | Long? | FK → recurring_transactions.id; added in DB v3 |
+| normalized_vendor_name | String? | Canonical vendor name set when a vendor keyword rule matches; null otherwise; added in DB v5 |
 
-**DB version: 4.** `Migration1To2` adds the `currency` column (back-filled from SharedPreferences). `Migration2To3` adds the `recurringId` column and creates the `recurring_transactions` table. `Migration3To4` adds the `excludedCategoryIds` column to `budgets`. Manual transactions default to the preferred currency at the time of entry.
+**DB version: 5.**
+- `Migration1To2` — adds `currency` column (back-filled from SharedPreferences)
+- `Migration2To3` — adds `recurringId` column + creates `recurring_transactions` table
+- `Migration3To4` — adds `excludedCategoryIds` column to `budgets`
+- `Migration4To5` — adds `normalized_vendor_name` column to `transactions`
+
+Manual transactions default to the preferred currency at the time of entry.
 
 ### categories
 | Column | Type | Notes |
@@ -71,7 +81,7 @@ com.finsense/
 | name | String | e.g. "Food & Dining" |
 | icon | String | Emoji character |
 | color | Long | ARGB as unsigned Long (e.g. 0xFFE57373L) |
-| keywords | String | Comma-separated; used for auto-categorization |
+| keywords | String | Comma-separated; used for auto-categorization keyword matching |
 
 11 default categories seeded on first DB creation via `AppModule.seedDefaultCategories()` using raw SQL in the Room callback (avoids circular DI dependency).
 
@@ -89,13 +99,21 @@ Budget "spent" is **never stored** — always computed dynamically by summing DE
 
 When `categoryId` is null and `excludedCategoryIds` is non-empty, `BudgetRepository` calls `TransactionDao.totalDebitForPeriodExcluding()` which uses `AND (categoryId IS NULL OR categoryId NOT IN (:excludedIds))`. The repository branches on `excludedIds.isNotEmpty()` so the `NOT IN` query is never called with an empty list (which would cause a Room binding error).
 
+`BudgetWithSpent` is the derived model used in the UI. In addition to `spent` and `percentage`, it computes:
+- `periodEndMs` — end of the current budget period (used to calculate days remaining)
+- `daysRemainingInPeriod` — calendar days from today to period end, minimum 1
+- `dailyAllowance` — `remaining / daysRemainingInPeriod` when under budget
+- `dailyOverspend` — `overage / daysRemainingInPeriod` when over budget
+
+Budget cards in both the Budget screen and Dashboard show the per-day rate so the user understands the pace of spending rather than just a raw remainder.
+
 ### vendors
 | Column | Type | Notes |
 |---|---|---|
 | id | Long PK autoGenerate | |
-| name | String | Canonical vendor name |
-| aliases | String | Comma-separated alternative names |
-| categoryId | Long? FK → categories.id | SET_NULL on delete |
+| name | String | Canonical display name (e.g. "Seoudi") |
+| aliases | String | Comma-separated keywords; any keyword matched as a substring of the raw extracted vendor triggers normalization |
+| categoryId | Long? FK → categories.id | SET_NULL on delete; auto-assigned when this vendor is matched |
 
 ## Key architectural decisions
 
@@ -105,10 +123,42 @@ When `categoryId` is null and `excludedCategoryIds` is non-empty, `BudgetReposit
 ### Dashboard/Budget reactive updates
 `DashboardViewModel` and `BudgetViewModel` observe `transactionRepository.getRecentWithCategory()` (a Room Flow that re-emits on any change to the `transactions` table) and call `refreshTotalsAndBudgets()` / `refreshBudgets()` inside `onEach`. This means monthly totals and budget "spent" amounts update live when SMS are imported in the background or when a manual transaction is added from another screen. Both ViewModels also observe `userPreferences.currencyFlow` and `userPreferences.monthStartDayFlow` and recalculate on change.
 
+### Dashboard pagination
+`DashboardViewModel` exposes a `_limit: MutableStateFlow<Int>` (initial value `PAGE_SIZE = 15`). The recent-transactions query uses `flatMapLatest` to re-query Room whenever `_limit` changes. `loadMoreTransactions()` increments `_limit` by `PAGE_SIZE`. `DashboardScreen` detects when the user scrolls to the last two items using `LazyListState.layoutInfo` and calls `loadMoreTransactions()` if `hasMoreTransactions` is true. A `CircularProgressIndicator` appears at the bottom of the list while more data is loading.
+
 ### Auto-categorization order
-1. Vendor name → exact/partial match in `vendors` table → use its `categoryId`
-2. Combined vendor+description text → keyword match against `categories.keywords`
-3. Falls through uncategorized (categoryId = null)
+1. **Vendor keyword match** — `TransactionRepository.findVendorByKeyword(extractedVendor)` loads all rows from the `vendors` table and checks (in memory) whether the extracted vendor string *contains* any stored vendor name or alias as a case-insensitive substring. First match wins. If matched, `normalizedVendorName` is set to `vendor.name` and the vendor's `categoryId` is applied.
+2. **Category keyword match** — combined vendor + description text is checked against each category's `keywords` (comma-separated). First category whose keywords appear in the text wins.
+3. Falls through uncategorized (`categoryId = null`).
+
+The matching direction in step 1 is intentionally the **reverse** of a simple lookup: we check whether the short stored keyword ("seoudi") is contained in the longer extracted string ("Seoudi Branch 1"), not the other way around.
+
+### Vendor normalization
+`Transaction.normalized_vendor_name` stores a clean canonical name when a vendor keyword rule matches during import. The raw `vendor` field is never overwritten, preserving the original SMS text for debugging.
+
+- **On import** (`autoCategorize` in `TransactionRepository`): `findVendorByKeyword` is called for every SMS-derived transaction. Match → set `normalizedVendorName`.
+- **Retroactively** (`TransactionRepository.applyVendorNormalization(vendor)`): called after a vendor is saved in the Vendors screen. Iterates all keywords and runs `TransactionDao.applyNormalizedVendorForKeyword(keyword, canonicalName)` — a SQL UPDATE that stamps `normalized_vendor_name` on existing rows where `lower(vendor) LIKE '%' || lower(keyword) || '%'` and `normalized_vendor_name IS NULL`.
+- **Display**: all screens show `transaction.normalizedVendorName ?: transaction.vendor`. Raw vendor is still visible in the transaction detail sheet under "From SMS".
+- **Search**: `TransactionDao.searchWithCategory` queries both `vendor` and `normalized_vendor_name`.
+- **Cascade categorization**: `updateCategoryForVendorUncategorized` matches on both `vendor = :vendor OR normalized_vendor_name = :normalizedName` so all variants of a vendor get categorized together.
+
+### Vendors screen
+Accessible from: **Settings → Categories & Vendors → Vendors tab**.
+
+`CategoriesScreen` hosts a `TabRow` with two tabs: **Categories** and **Vendors**. Each tab has its own FAB. `VendorsViewModel` injects `VendorDao`, `CategoryRepository`, and `TransactionRepository`. Saving a vendor (add or edit) immediately calls `applyVendorNormalization` to retroactively normalize existing transactions.
+
+### Insights screen
+`InsightsScreen` is a bottom-nav destination (replaces Categories in the nav bar). It shows a spending breakdown for a selected time period as a donut chart + sorted list.
+
+**Period options** (preset chips, no custom range): This month · Last month · 3 months · 6 months · This year. "This month" and "Last month" use the same `customMonthRange(monthStartDay, offset)` algorithm as budgets so they respect the user's configured month start day. "3 months" and "6 months" are rolling windows (`now - N months` to `now`). "This year" runs from 1 January to now.
+
+**View modes** (segmented button): Categories | Vendors. In vendor mode, transactions are grouped by `normalizedVendorName ?: vendor`.
+
+**Exclude filter**: a filter chip opens a bottom sheet where the user can exclude any categories from the calculation. Exclusion filters the raw transaction list before computing totals, so percentages always add up to 100% of the *included* spend.
+
+**Data flow**: `InsightsViewModel` calls `TransactionDao.getDebitTransactionsForPeriod(start, end, currency)` — a one-shot suspend query (not a Flow) — whenever period, view mode, or excluded categories change. Slices are computed in-memory from the result list. Category slices use the category's stored ARGB color; vendor slices cycle through a fixed 12-color palette (`VENDOR_PALETTE`).
+
+**Donut chart**: drawn on a `Canvas` composable. Each slice is a `drawArc` with a 2-degree gap between slices (no gap when there is only one slice). The total spent is overlaid in the center using a `Box` + `Text`.
 
 ### SMS deduplication
 Each SMS-derived transaction stores `smsId` (the `_id` from `Telephony.Sms.Inbox`). The column has a UNIQUE index. `TransactionDao.insert()` uses `OnConflictStrategy.IGNORE`, so re-importing the same SMS is a no-op.
@@ -135,24 +185,24 @@ ViewModels observe both flows and recalculate totals/budgets immediately when ei
 ### Month start day
 `UserPreferences.monthStartDay` (1–28, default 1) allows the period used for monthly totals and MONTHLY budgets to be aligned to any day of the month — e.g. a salary date of the 25th means the period runs from the 25th of one month to the 24th of the next.
 
-`TransactionRepository.periodMonthRange(monthStartDay)` and `BudgetRepository.customMonthRange(monthStartDay)` implement the same algorithm:
+`TransactionRepository.periodMonthRange(monthStartDay)`, `BudgetRepository.customMonthRange(monthStartDay)`, and `InsightsViewModel.customMonthRange(monthStartDay, offset)` all implement the same algorithm:
 - If today's day-of-month ≥ `monthStartDay`: start = `monthStartDay` of the current month
 - Otherwise: start = `monthStartDay` of the previous month
 - End = start + 1 month − 1 day (23:59:59.999)
 
-Setting it to 1 produces the standard calendar month. The setting is exposed in the Settings screen via a `−`/`+` picker (capped to 1–28 to be safe across all months). DAILY and WEEKLY budget periods are unaffected.
+The `offset` parameter in the Insights variant shifts the window by N months (e.g. `offset = -1` gives "last month"). Setting `monthStartDay` to 1 produces the standard calendar month. DAILY and WEEKLY budget periods are unaffected.
 
 ### Multi-currency / international transactions
 `SmsParser.extractAmountAndCurrency()` tries the preferred-currency patterns first, then falls back to a generic ISO-code pattern that catches `USD 50.00`, `EUR 1,200.00`, `GBP 45`, etc. The parsed currency code is stored in `Transaction.currency`.
 
-Totals and budget calculations are filtered by `currency = :currency` in the DAO queries, so foreign-currency transactions are stored and visible in the transaction list but are excluded from the monthly totals and budget progress. No exchange-rate conversion is performed (the app has no network access).
+Totals and budget calculations are filtered by `currency = :currency` in the DAO queries, so foreign-currency transactions are stored and visible in the transaction list but are excluded from the monthly totals, budget progress, and insights. No exchange-rate conversion is performed (the app has no network access).
 
 Transaction rows display amounts in the preferred currency's symbol for matching rows, and as `"<CODE> <amount>"` (e.g. `−USD 50.00`) for foreign rows.
 
 ### SMS vendor extraction
 `SmsParser.vendorPatterns` is an ordered list of regexes tried in sequence; first match wins. Patterns currently (in priority order):
 
-1. `at\s+([0-9][A-Za-z0-9 &.\-'_]{1,49}?)\s+on\b` — digit-starting names between "at" and "on" (e.g. `at 30 NORTH Mall O on`)
+1. `at\s+([0-9][A-Za-z0-9 &.\-'_]{1,49}?)\s+on\b` — digit-starting names between "at" and "on" (e.g. `at 30 NORTH Mall on`)
 2. `(?:at|At)\s+([A-Z][A-Za-z0-9 &.\-'_]{2,40}?)(?:\s+on\b|\s+via\b|\s+\(|\.|;|\|)` — uppercase-starting names between "at" and a delimiter
 3. Additional patterns for other SMS formats
 
@@ -167,7 +217,7 @@ Patterns 1 and 2 are non-overlapping by first character (`[0-9]` vs `[A-Z]`), so
 `SmsParser` extracts the transaction date from the SMS body using the pattern `DD/MM/YY at hh:mm` (24 h, e.g. `14/04/26 at 16:08`). Parsed with `DateTimeFormatter.ofPattern("dd/MM/yy 'at' HH:mm")` and converted to epoch ms using `ZoneId.systemDefault()`. If extraction fails, falls back to the SMS metadata timestamp (`sms.date`) in `SmsSyncWorker`, or `System.currentTimeMillis()` in `SmsReceiver`.
 
 ### Color storage
-Category colors stored as `Long` (not `Int`) to avoid signed overflow with full-alpha ARGB values. `0xFFE57373L` = valid Long; `0xFFE57373.toInt()` = negative Int which causes issues in Compose's `Color(Int)` constructor. Use `Color(category.color)` in Compose (accepts Long).
+Category colors stored as `Long` (not `Int`) to avoid signed overflow with full-alpha ARGB values. `0xFFE57373L` = valid Long; `0xFFE57373.toInt()` = negative Int which causes issues in Compose's `Color(Int)` constructor. Use `Color(category.color)` in Compose (accepts Long). The same convention is used for vendor palette colors in `InsightsViewModel.VENDOR_PALETTE`.
 
 ## Build notes
 
@@ -193,6 +243,7 @@ Icons must be in `res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/` as `ic_launcher.
 | `Illegal annotation class 'Transaction'` | `@Transaction` resolved to entity class instead of Room annotation due to name clash | Aliased Room annotation: `import androidx.room.Transaction as RoomTransaction` |
 | Monthly totals and budget "spent" never updated after initial load | `loadMonthlyTotals()` ran once at ViewModel init; `loadBudgets()` only re-ran on budget table changes, not transaction changes | Replaced with `observeRecentTransactions().onEach { refreshTotalsAndBudgets() }` — Room re-emits that Flow on any `transactions` table change |
 | FAB not visible in Categories screen | `CategoriesScreen` used a nested `Scaffold` with `floatingActionButton`; the outer bottom-nav `Scaffold` caused the inner FAB to be rendered outside the visible area | Replaced nested `Scaffold` with `Box` + `FloatingActionButton` aligned to `BottomEnd` using `contentPadding.calculateBottomPadding()` — same pattern as `BudgetScreen` |
+| Room KSP error: `no such column: normalized_vendor_name` | Room validates DAO queries against entity schema at compile time; field name `normalizedVendorName` does not auto-convert to snake_case | Added `@ColumnInfo(name = "normalized_vendor_name")` to the `Transaction` entity field |
 
 ## Permissions
 - `READ_SMS` — read historical SMS from content provider (dangerous, runtime prompt)
@@ -205,13 +256,17 @@ App launch → PermissionScreen
   ├─ Permission granted → SmsSyncWorker triggered → Dashboard
   └─ Skip → Dashboard (manual entry only)
 
-Bottom nav: Dashboard | Transactions | Budgets | Categories | Settings
+Bottom nav: Dashboard | Transactions | Budgets | Insights | Settings
+
+Settings → Categories & Vendors → CategoriesScreen
+  ├─ Categories tab  (add/delete spending categories)
+  └─ Vendors tab     (add/edit vendor keyword rules)
 ```
 
 ### Amount formatting
 `AppCurrency.formatAmount(Double)` is the single source of truth for full-precision amount display. It uses `NumberFormat.getNumberInstance(Locale.US)` with 2 decimal places and prepends the currency symbol (e.g. `EGP 1,500.00`, `₹ 1,500.00`). All screens receive the current `AppCurrency` via their ViewModel's UI state — there are no hardcoded locale or currency formatters in the UI layer.
 
-`AppCurrency.formatCompact(Double)` is used in summary contexts where horizontal space is constrained (currently: `AmountColumn` in the Dashboard monthly overview card). It abbreviates large numbers to avoid overflow in the 3-column layout:
+`AppCurrency.formatCompact(Double)` is used in summary contexts where horizontal space is constrained (Dashboard monthly overview card, Insights donut center, Insights breakdown list). It abbreviates large numbers:
 - `< 10,000` → full format (`EGP 9,999.00`)
 - `>= 10,000` → K suffix (`EGP 150K`, `EGP 15.5K`)
 - `>= 1,000,000` → M suffix (`EGP 1.5M`, `EGP 2M`)

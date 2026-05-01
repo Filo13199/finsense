@@ -105,6 +105,18 @@ interface TransactionDao {
     suspend fun applyNormalizedVendorForKeyword(keyword: String, normalizedName: String)
 
     @RoomTransaction
+    @Query("""
+        SELECT * FROM transactions
+        WHERE type = 'DEBIT'
+        AND date >= :startDate AND date <= :endDate
+        AND currency = :currency
+        ORDER BY amount DESC
+    """)
+    suspend fun getDebitTransactionsForPeriod(
+        startDate: Long, endDate: Long, currency: String
+    ): List<TransactionWithCategory>
+
+    @RoomTransaction
     @Query("SELECT * FROM transactions ORDER BY date DESC LIMIT :limit")
     fun getLatestWithCategory(limit: Int): Flow<List<TransactionWithCategory>>
 }
