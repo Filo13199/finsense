@@ -44,8 +44,8 @@ class SmsParser @Inject constructor(private val userPreferences: UserPreferences
 
     // Generic fallback: catches "USD 50.00", "EUR 1,200.00", "GBP 45" etc.
     // Tried only after preferred-currency patterns fail.
-    private val intlCurrencyBeforeAmount = Regex("""\b([A-Z]{3})\s+([0-9,]+(?:\.[0-9]{1,2})?)""")
-    private val intlAmountBeforeCurrency = Regex("""([0-9,]+(?:\.[0-9]{1,2})?)\s*\b([A-Z]{3})\b""")
+    private val intlCurrencyBeforeAmount = Regex("""\b([A-Z]{3})\s+((\.)*[0-9,]+(?:\.[0-9]{1,2})?)""")
+    private val intlAmountBeforeCurrency = Regex("""((\.)*[0-9,]+(?:\.[0-9]{1,2})?)\s*\b([A-Z]{3})\b""")
 
     // Last-resort: amount without any currency marker — used with preferred currency as default.
     private val amountOnlyPatterns = listOf(
