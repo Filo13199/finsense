@@ -209,7 +209,7 @@ private fun TransactionDetailSheet(
             ) {
                 Text(txc.category?.icon ?: "📦", style = MaterialTheme.typography.displaySmall)
                 Column {
-                    Text(tx.vendor, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                    Text(tx.normalizedVendorName ?: tx.vendor, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Text(amountText, style = MaterialTheme.typography.titleMedium,
                         color = amountColor, fontWeight = FontWeight.Bold)
                 }
@@ -284,7 +284,7 @@ private fun TransactionDetailSheet(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                "Apply to all \"${tx.vendor}\" transactions",
+                                "Apply to all \"${tx.normalizedVendorName ?: tx.vendor}\" transactions",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                             Text(

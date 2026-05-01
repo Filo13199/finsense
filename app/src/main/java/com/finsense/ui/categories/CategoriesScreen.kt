@@ -14,50 +14,110 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.finsense.data.entity.Category
+import com.finsense.ui.vendors.AddEditVendorSheet
+import com.finsense.ui.vendors.VendorsContent
+import com.finsense.ui.vendors.VendorsViewModel
+import com.finsense.data.entity.Vendor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CategoriesScreen(
     contentPadding: PaddingValues,
-    vm: CategoriesViewModel = hiltViewModel()
+    vm: CategoriesViewModel = hiltViewModel(),
+    vendorsVm: VendorsViewModel = hiltViewModel()
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
-    var showSheet by remember { mutableStateOf(false) }
+    val vendorsState by vendorsVm.uiState.collectAsStateWithLifecycle()
 
-    Scaffold(
-        floatingActionButton = {
-            FloatingActionButton(onClick = { showSheet = true }) {
-                Icon(Icons.Default.Add, contentDescription = "Add category")
-            }
+    var selectedTab by remember { mutableStateOf(0) }
+    var showCategorySheet by remember { mutableStateOf(false) }
+    var showVendorSheet by remember { mutableStateOf(false) }
+    var editingVendor by remember { mutableStateOf<Vendor?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(top = contentPadding.calculateTopPadding())
+    ) {
+        TabRow(selectedTabIndex = selectedTab) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("Categories") }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("Vendors") }
+            )
         }
-    ) { innerPadding ->
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            contentPadding = contentPadding,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            item(span = { GridItemSpan(2) }) { Spacer(Modifier.height(8.dp)) }
-            items(state.categories, key = { it.id }) { cat ->
-                CategoryCard(
-                    category = cat,
-                    onDelete = { vm.deleteCategory(cat) }
-                )
+
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when (selectedTab) {
+                0 -> {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        contentPadding = PaddingValues(
+                            top = 8.dp,
+                            bottom = contentPadding.calculateBottomPadding() + 80.dp,
+                            start = 8.dp,
+                            end = 8.dp
+                        ),
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(state.categories, key = { it.id }) { cat ->
+                            CategoryCard(category = cat, onDelete = { vm.deleteCategory(cat) })
+                        }
+                    }
+                    FloatingActionButton(
+                        onClick = { showCategorySheet = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = contentPadding.calculateBottomPadding() + 16.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add category")
+                    }
+                }
+                1 -> {
+                    VendorsContent(
+                        vendors = vendorsState.vendors,
+                        categories = vendorsState.categories,
+                        contentPadding = contentPadding,
+                        onAdd = { editingVendor = null; showVendorSheet = true },
+                        onEdit = { vendor -> editingVendor = vendor; showVendorSheet = true },
+                        onDelete = { vendorsVm.deleteVendor(it) }
+                    )
+                }
             }
-            item(span = { GridItemSpan(2) }) { Spacer(Modifier.height(80.dp)) }
         }
     }
 
-    if (showSheet) {
+    if (showCategorySheet) {
         AddCategorySheet(
-            onDismiss = { showSheet = false },
+            onDismiss = { showCategorySheet = false },
             onAdd = { name, icon, color ->
                 vm.addCategory(name, icon, color)
-                showSheet = false
+                showCategorySheet = false
+            }
+        )
+    }
+
+    if (showVendorSheet) {
+        AddEditVendorSheet(
+            vendor = editingVendor,
+            categories = vendorsState.categories,
+            onDismiss = { showVendorSheet = false; editingVendor = null },
+            onSave = { name, aliases, catId ->
+                val current = editingVendor
+                if (current != null) {
+                    vendorsVm.updateVendor(current.copy(name = name, aliases = aliases, categoryId = catId))
+                } else {
+                    vendorsVm.addVendor(name, aliases, catId)
+                }
+                showVendorSheet = false
+                editingVendor = null
             }
         )
     }
@@ -87,29 +147,25 @@ private fun CategoryCard(category: Category, onDelete: () -> Unit) {
                 onClick = onDelete,
                 modifier = Modifier.size(28.dp)
             ) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete",
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete",
                     tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(16.dp))
+                    modifier = Modifier.size(16.dp)
+                )
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AddCategorySheet(
     onDismiss: () -> Unit,
     onAdd: (String, String, Long) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
-    var icon by remember { mutableStateOf("📦") }
-
-    val presetIcons = listOf("🍔","🛒","🚗","🛍️","🎬","💊","💡","🏦","📚","💸","📦","✈️","🏠","💻","🎮","🌿")
-    val presetColors = listOf(
-        0xFFE57373L, 0xFF81C784L, 0xFF64B5F6L, 0xFFBA68C8L,
-        0xFFFFB74DL, 0xFF4DB6ACL, 0xFFFFD54FL, 0xFF90A4AEL
-    )
-    var selectedColor by remember { mutableLongStateOf(presetColors[0]) }
+    var icon by remember { mutableStateOf("") }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -128,46 +184,16 @@ private fun AddCategorySheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Text("Icon", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                presetIcons.forEach { emoji ->
-                    FilterChip(
-                        selected = icon == emoji,
-                        onClick = { icon = emoji },
-                        label = { Text(emoji, style = MaterialTheme.typography.titleMedium) }
-                    )
-                }
-            }
-
-            Text("Color", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                presetColors.forEach { colorValue ->
-                    val color = Color(colorValue)
-                    FilterChip(
-                        selected = selectedColor == colorValue,
-                        onClick = { selectedColor = colorValue },
-                        label = {
-                            Box(
-                                Modifier
-                                    .size(24.dp)
-                                    .padding(2.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Surface(
-                                    modifier = Modifier.fillMaxSize(),
-                                    shape = MaterialTheme.shapes.small,
-                                    color = color
-                                ) {}
-                            }
-                        }
-                    )
-                }
-            }
+            OutlinedTextField(
+                value = icon,
+                onValueChange = { icon = it },
+                label = { Text("Emoji") },
+                placeholder = { Text("📦") },
+                modifier = Modifier.fillMaxWidth()
+            )
 
             Button(
-                onClick = { onAdd(name, icon, selectedColor) },
+                onClick = { onAdd(name, icon.ifBlank { "📦" }, 0xFF90A4AEL) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = name.isNotBlank()
             ) {
